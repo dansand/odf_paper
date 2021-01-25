@@ -1,0 +1,313 @@
+####  Global parameters
+set Dimension                              = 2
+set Start time                             = 0
+set End time                               = 10e6
+set Use years in output instead of seconds = true
+set Nonlinear solver scheme                = single Advection, iterated Stokes
+set Max nonlinear iterations               = 40
+set Nonlinear solver tolerance             = 1e-5
+set Max nonlinear iterations in pre-refinement      = 0
+set Maximum first time step                    = 1e2
+set Maximum relative increase in time step     = 50
+set Maximum time step                          = 2e3
+set Resume computation                         = auto
+set Output directory                       = /path_to_output_dir
+set Pressure normalization                 = no
+
+
+
+#
+subsection Solver parameters
+  subsection Stokes solver parameters
+    #set Use full A block as preconditioner              = true
+    set Number of cheap Stokes solver steps             = 200
+    #set Maximum number of expensive Stokes solver steps = 1000
+    set Linear solver tolerance                         = 1e-5
+  end
+end
+
+
+
+# A box of 1000x1000x165 km
+subsection Geometry model
+  set Model name = box
+
+  subsection Box
+    set X extent = 400e3
+    set Y extent = 100e3
+    set Box origin X coordinate = -200e3
+    set X repetitions = 100
+    set Y repetitions = 25
+  end
+
+end
+
+
+
+subsection Initial temperature model
+  set Model name = function
+  subsection Function
+    set Variable names = x,y
+    set Function constants = ymax=100e3, halfspread=0.01, Tm=1575.0, Ts=293.0, kappa=1e-6, agemin = 0.5e6, yrtosec=3.155e7
+    set Function expression = (Ts + (Tm-Ts)*(1-erfc((ymax-y)/(2*sqrt(kappa*(agemin*yrtosec + (abs(x)+ 1.0)/(halfspread/yrtosec)))))));
+  end
+end
+
+# Specify 3 materials (oceanic crust and
+# mantle lithosphere) besides the background
+# asthenosphere
+subsection Compositional fields
+  set Number of fields = 7
+  set Names of fields  = stress_xx, stress_yy, stress_xy, mantle_L, crust, plastic_strain, viscous_strain
+end
+
+############### Parameters describing the discretization
+
+#stress_xx, stress_yy, stress_xy, mantle_L, crust, plastic_strain
+subsection Discretization
+  set Composition polynomial degree                  = 2
+  set Temperature polynomial degree                  = 2
+  set Stokes velocity polynomial degree              = 2
+end
+
+
+# Spatial domain of different compositional fields
+subsection Initial composition model
+  set Model name = function
+  subsection Function
+    set Function constants = ymax=100e3,
+    set Variable names      = x,y
+    set Function expression = 0;0;0; \
+                              if((ymax-y)>=8e3, 1, 0); \
+                              if((ymax-y)<8e3, 1, 0); \
+                              0.25*rand_seed(0); \
+                              0.25*rand_seed(0);
+  end
+end
+
+
+
+
+
+# Set any fixed temperature and composition
+# boundary conditions based on the values
+# set in the initial conditions
+subsection Boundary composition model
+  set Model name = initial composition
+end
+
+
+subsection Boundary temperature model
+  #set List of model names = initial temperature
+  set List of model names = constant
+  subsection Constant
+    set Boundary indicator to temperature mappings = bottom:1575,  top:293
+  end
+end
+
+
+# Set boundary conditions
+#subsection Model settings
+
+subsection Boundary temperature model
+  set Fixed temperature boundary indicators   = bottom, top
+end
+
+subsection Boundary composition model
+  set Fixed composition boundary indicators   =
+end
+
+subsection Boundary velocity model
+  set Zero velocity boundary indicators       =
+  set Prescribed velocity boundary indicators = left x:function, right x:function, bottom y:function
+  set Tangential velocity boundary indicators =
+end
+
+
+
+# Advecting the free surface vertically rather than
+# in the surface normal direction can result in a
+# more stable mesh when the deformation is large
+subsection Mesh deformation
+  set Mesh deformation boundary indicators        = top: free surface, top: diffusion
+    set Additional tangential mesh velocity boundary indicators = left,right
+  subsection Free surface
+    set Surface velocity projection = normal
+    set Free surface stabilization theta = 0.5
+  end
+  subsection Diffusion
+    # The diffusivity
+    set Hillslope transport coefficient = 1e-8
+  end
+
+end
+
+
+subsection Formulation
+  # incompressible
+  set Formulation          = Boussinesq approximation
+  set Enable elasticity = true
+end
+
+
+
+# Prescribe an outflow on the left and right boundary
+# and a compensating inflow on the bottom boundary
+subsection Boundary velocity model
+  subsection Function
+    set Coordinate system   = cartesian
+    set Variable names      = x,y,t
+    set Function constants  = mm=0.001, yr=1, outflow=20., t_depth=100e3, dx=400e3
+    set Function expression = if(x>0.0,0.5*outflow*mm/yr,-0.5*outflow*mm/yr); \
+                              outflow*t_depth/dx*mm/yr
+  end
+end
+
+subsection Gravity model
+  set Model name = vertical
+
+  subsection Vertical
+    set Magnitude = 9.81
+  end
+end
+
+# Describe rheology and material properties
+subsection Material model
+  set Model name = visco plastic
+
+  subsection Visco Plastic
+
+    # Reference temperature and viscosity
+    set Reference temperature = 293
+    set Reference viscosity = 1e22
+
+    # The minimum strain-rate helps limit large viscosities values that arise
+    # as the strain-rate approaches zero.
+    # The reference strain-rate is used on the first non-linear iteration
+    # of the first time step when the velocity has not been determined yet.
+    # It can be computed from the total spreading velocity over the domain width.
+    set Minimum strain rate = 1.e-25
+    set Reference strain rate = 1.e-17
+
+    # Limit the viscosity with minimum and maximum values
+    set Minimum viscosity = 1e18
+    set Maximum viscosity = 1e24
+
+    # Thermal diffusivity is adjusted to match thermal conductivities
+    # assumed in assigning the initial geotherm
+    # Following Mittelstaedt et al. 2008 and 2011
+    set Thermal diffusivities = 3e-6
+    set Heat capacities       = 1000
+    set Densities             = 3300
+    set Thermal expansivities = 3.5e-5
+    set Elastic shear moduli = 1.e10
+
+    # Harmonic viscosity averaging
+    set Viscosity averaging scheme = harmonic
+
+    # Choose to have the viscosity (pre-yield) follow a dislocation
+    # diffusion or composite flow law.  Here, dislocation is selected
+    # so no need to specify diffusion creep parameters below, which are
+    # only used if "diffusion" or "composite" option is selected.
+    set Viscous flow law = dislocation
+
+    # Dislocation creep parameters for
+    # 1. Background material (wet olivine)
+    #    Hirth & Kohlstedt (2004),  Geophys. Monogr. Am. Geophys. Soc., v.138, p.83-105.
+    #    "Rheology of the upper mantle and the mantle wedge:a view from the experimentalists"
+    # 2. Mantle lithosphere as above
+    # 3. Oceanic crust
+    #    Currie and Beaumont (2011), EPSL 303, p.59-70.
+    # Note that the viscous pre-factors below are scaled to plane strain from unixial strain experiments.
+    set Prefactors for dislocation creep          = 3.77e-14
+    set Stress exponents for dislocation creep    =      3.5
+    set Activation energies for dislocation creep =   520.e3
+    set Activation volumes for dislocation creep  =   22.e-6
+    # Plasticity parameters
+    set Angles of internal friction =   20.
+    set Cohesions                   = 20.e6
+    #set Strain weakening mechanism = plastic weakening with plastic strain only
+    set Strain weakening mechanism = plastic weakening with plastic strain and viscous weakening with viscous strain
+    set Start prefactor strain weakening intervals = 0.0
+    set End prefactor strain weakening intervals = 2.0
+    # the resulting strain-dependent factor is multiplied to the viscous viscosity (i.e. weakening if it is < 1)
+    set Prefactor strain weakening factors       =   0.5
+
+    set Start plasticity strain weakening intervals = 0.
+    set End plasticity strain weakening intervals = 6.0
+    set Cohesion strain weakening factors = 0.5
+    set Friction strain weakening factors = 0.1
+    #set Use strain weakening = true
+    #set Reaction depth                                 = 8e3
+    set Fixed elastic time step     = 1e4
+    set Use fixed elastic time step = true
+    set Use stress averaging        = true
+
+    set Fixed elastic time step     = 10e3
+    set Use fixed elastic time step = true
+    set Use stress averaging        = true
+    set Include viscoelasticity     = true
+
+  end
+end
+
+
+# Prescribe the initial mesh
+# no mesh adaptation after t0
+subsection Mesh refinement
+  set Coarsening fraction                      = 0.0
+  set Refinement fraction                      = 1
+  set Initial global refinement                = 0
+  set Initial adaptive refinement              = 5
+  set Time steps between mesh refinement       = 0
+  set Strategy                                 = minimum refinement function
+  subsection Minimum refinement function
+    set Coordinate system   = cartesian
+    set Variable names      = x,y
+    set Function expression = if(y>90e3 & abs(x)<40e3, 5, if(y>80e3 & abs(x)<70e3, 4, if(y > 70e3, if(abs(x)<100e3,3, 2),if(y>40e3,1,0))))
+  end
+
+end
+
+
+
+
+subsection Adiabatic conditions model
+  subsection Compute profile
+    set Composition reference profile = function
+    # In terms of depth
+    # Moho depth 6 km, LAB depth deepest in domain
+    set Function expression           = 0;0;0; \
+                                        if(x<8e3,1,0); \
+                                        if(x>=8e3&x<125e3,1,0); \
+                                        0; \
+                                        0;
+    set Composition reference profile = function
+  end
+end
+
+
+subsection Checkpointing
+   set Steps between checkpoint = 50
+   #set Time between checkpoint
+end
+
+subsection Termination criteria
+  set Checkpoint on termination = true
+end
+
+# Get some statistics output at every timestep and paraview files every
+subsection Postprocess
+  set List of postprocessors = topography, velocity statistics, visualization
+  subsection Visualization
+    set Interpolate output = true
+    set Write higher order output = true
+    set List of output variables      =  viscosity, strain rate, maximum horizontal compressive stress, strain rate tensor, named additional outputs
+    set Time between graphical output = 20e3
+    set Output mesh velocity          = false
+  end
+  subsection Topography
+     set Output to file = true
+     set Time between text output = 20e3
+  end
+end
