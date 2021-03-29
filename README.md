@@ -1,6 +1,6 @@
 ## OVERVIEW 
 
-Contains the ASPECT input file for reference model of Sandiford et al. (G-cubed, 2021).  
+Contains the ASPECT input file for the reference model of Sandiford et al. (G-cubed, 2021).  
 
 All models were ran using ASPECT version 2.3.0-pre, compiled with deal.II 9.1.1
 
