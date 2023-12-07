@@ -1,18 +1,21 @@
 ####  Global parameters
 set Dimension                              = 2
 set Start time                             = 0
-set End time                               = 10e6
+set End time                               = 5e6
 set Use years in output instead of seconds = true
-set Nonlinear solver scheme                = single Advection, iterated Stokes
-set Max nonlinear iterations               = 40
-set Nonlinear solver tolerance             = 1e-5
-set Max nonlinear iterations in pre-refinement      = 0
 set Maximum first time step                    = 1e2
 set Maximum relative increase in time step     = 50
 set Maximum time step                          = 2e3
 set Resume computation                         = auto
 set Output directory                       = /path_to_output_dir
 set Pressure normalization                 = no
+
+#solver settings
+set Nonlinear solver scheme                = iterated Advection and Stokes
+set Use operator splitting                 = true
+set Max nonlinear iterations               = 10
+set Nonlinear solver tolerance             = 1e-5
+set Max nonlinear iterations in pre-refinement      = 0
 
 
 
@@ -21,8 +24,11 @@ subsection Solver parameters
   subsection Stokes solver parameters
     #set Use full A block as preconditioner              = true
     set Number of cheap Stokes solver steps             = 200
-    #set Maximum number of expensive Stokes solver steps = 1000
     set Linear solver tolerance                         = 1e-5
+  end
+  subsection Operator splitting parameters
+    set Reaction time step                     = 1e3
+    set Reaction time steps per advection step = 1
   end
 end
 
@@ -48,40 +54,57 @@ subsection Initial temperature model
   set Model name = function
   subsection Function
     set Variable names = x,y
-    set Function constants = ymax=100e3, halfspread=0.01, Tm=1575.0, Ts=293.0, kappa=1e-6, agemin = 0.5e6, yrtosec=3.155e7
-    set Function expression = (Ts + (Tm-Ts)*(1-erfc((ymax-y)/(2*sqrt(kappa*(agemin*yrtosec + (abs(x)+ 1.0)/(halfspread/yrtosec)))))));
+    #the diffusivity value here represents the assumed "true" diffusivity, which governs the large scale cooling/subsidence of the lithosphere
+    #the advection-diffusion equation (see material model) uses a higher diffusivity (3e-6)
+    #this is intended as a paramaterization of the near axis cooling effect of hydrothermal circulation (cf. Lavier and Buck, 2002)
+    #As implemented here, the higher diffusivity applies thoughout the domain, rather than being localized at the ridge
+    #the parameters chosen here result in ~10 km lithosphere at the ridge axis, which is in the range identified for ODF development.
+    #due to the difference in diffusivity values in the initial conditions, and temperature evolution equation,
+    #the thermal stucture is not in steady state; cooling of the off-axis lithosphere will occur
+    set Function constants = ymax=100e3, halfspread=0.01, Tm=1575.0, Ts=293.0, diffusivity=1e-6, agemin = 0.5e6, yrtosec=3.155e7
+    set Function expression = (Ts + (Tm-Ts)*(1-erfc((ymax-y)/(2*sqrt(diffusivity*(agemin*yrtosec + (abs(x)+ 1.0)/(halfspread/yrtosec)))))));
   end
 end
 
-# Specify 3 materials (oceanic crust and
-# mantle lithosphere) besides the background
-# asthenosphere
+# Specifymaterials
+#Note that there is no difference in the material properties of crust/mantle_L and background
 subsection Compositional fields
-  set Number of fields = 7
-  set Names of fields  = stress_xx, stress_yy, stress_xy, mantle_L, crust, plastic_strain, viscous_strain
+  set Number of fields = 10
+  set Names of fields  = ve_stress_xx, ve_stress_yy, ve_stress_xy, ve_stress_xx_old, ve_stress_yy_old, ve_stress_xy_old, mantle_L, crust, plastic_strain, viscous_strain
+  set Compositional field methods = field, field, field, field, field, field, field, field, field, field
 end
 
 ############### Parameters describing the discretization
 
-#stress_xx, stress_yy, stress_xy, mantle_L, crust, plastic_strain
+#ve_stress_xx, stress_yy, stress_xy, mantle_L, crust, plastic_strain
+# Element types
 subsection Discretization
-  set Composition polynomial degree                  = 2
-  set Temperature polynomial degree                  = 2
-  set Stokes velocity polynomial degree              = 2
+  set Composition polynomial degree           = 2
+  set Stokes velocity polynomial degree       = 2
+  set Temperature polynomial degree           = 2
+  set Use locally conservative discretization = false
+  set Use discontinuous temperature discretization = false
+  set Use discontinuous composition discretization = true
+  subsection Stabilization parameters
+    set Use limiter for discontinuous composition solution = true
+    set Global composition maximum =  1.e11,  1.e11,  1.e11,  1.e11,  1.e11,  1.e11, 1.0, 1.0, 10.0, 10.0
+    set Global composition minimum = -1.e11, -1.e11, -1.e11, -1.e11, -1.e11, -1.e11, 0.0, 0.0, 0.0, 0.0
+  end
 end
 
 
+#see https://github.com/geodynamics/aspect/issues/5114 for why rand() is used here
 # Spatial domain of different compositional fields
 subsection Initial composition model
   set Model name = function
   subsection Function
     set Function constants = ymax=100e3,
     set Variable names      = x,y
-    set Function expression = 0;0;0; \
+    set Function expression = 0;0;0;0;0;0; \
                               if((ymax-y)>=8e3, 1, 0); \
                               if((ymax-y)<8e3, 1, 0); \
-                              0.25*rand_seed(0); \
-                              0.25*rand_seed(0);
+                              0.25*rand(); \
+                              0.25*rand();
   end
 end
 
@@ -137,7 +160,7 @@ subsection Mesh deformation
   end
   subsection Diffusion
     # The diffusivity
-    set Hillslope transport coefficient = 1e-8
+    set Hillslope transport coefficient = 5e-8
   end
 
 end
@@ -157,9 +180,9 @@ subsection Boundary velocity model
   subsection Function
     set Coordinate system   = cartesian
     set Variable names      = x,y,t
-    set Function constants  = mm=0.001, yr=1, outflow=20., t_depth=100e3, dx=400e3
-    set Function expression = if(x>0.0,0.5*outflow*mm/yr,-0.5*outflow*mm/yr); \
-                              outflow*t_depth/dx*mm/yr
+    set Function constants  = cm=0.01, yr=1, outflow=2., t_depth=100e3, dx=400e3
+    set Function expression = if(x>0.0,0.5*outflow*cm/yr,-0.5*outflow*cm/yr); \
+                              outflow*t_depth/dx*cm/yr
   end
 end
 
@@ -179,7 +202,7 @@ subsection Material model
 
     # Reference temperature and viscosity
     set Reference temperature = 293
-    set Reference viscosity = 1e22
+    #set Reference viscosity = 1e22
 
     # The minimum strain-rate helps limit large viscosities values that arise
     # as the strain-rate approaches zero.
@@ -193,9 +216,7 @@ subsection Material model
     set Minimum viscosity = 1e18
     set Maximum viscosity = 1e24
 
-    # Thermal diffusivity is adjusted to match thermal conductivities
-    # assumed in assigning the initial geotherm
-    # Following Mittelstaedt et al. 2008 and 2011
+    #See previous notes on the thermal diffusivity value and assumptions
     set Thermal diffusivities = 3e-6
     set Heat capacities       = 1000
     set Densities             = 3300
@@ -215,10 +236,16 @@ subsection Material model
     # 1. Background material (wet olivine)
     #    Hirth & Kohlstedt (2004),  Geophys. Monogr. Am. Geophys. Soc., v.138, p.83-105.
     #    "Rheology of the upper mantle and the mantle wedge:a view from the experimentalists"
-    # 2. Mantle lithosphere as above
-    # 3. Oceanic crust
-    #    Currie and Beaumont (2011), EPSL 303, p.59-70.
-    # Note that the viscous pre-factors below are scaled to plane strain from unixial strain experiments.
+    # Note that the viscous pre-factor below is scaled to effective stress/strain rates, from the uniaxial experimental condition (axial strain / differential stress).
+    # The scaling follows the description in T. Gerya, "Introduction to Numerical Geodynamic Modelling"
+    # In ASPECT,the "F2" value (from Gerya) is incorporated into the prefactor A
+    # the additional factor of 1/2 that is defined in the ASPECT function for dislocation viscosity is also accounted for.
+    # The following code can reproduce the conversion in Python
+    # A = 6.37e-15 (Pa)  #effective prefactor from uniaxial experiment (axial-strain-rate-as-a-function-of-differential-stress)
+    # (the above A assumes A(MPa) = 1600, C_OH=1000, r=1.2, see Hirth & Kohlstedt (2004) Table 1, row 5)
+    # n     = 3.5 #stress exponent
+    # F2    = 1/2**((n-1)/n)/3**((n+1)/2/n)
+    # Aa    = A*(2*F2)**(-n)  #prefactor required in the ASPECT viscosity relationship
     set Prefactors for dislocation creep          = 3.77e-14
     set Stress exponents for dislocation creep    =      3.5
     set Activation energies for dislocation creep =   520.e3
@@ -226,27 +253,17 @@ subsection Material model
     # Plasticity parameters
     set Angles of internal friction =   20.
     set Cohesions                   = 20.e6
-    #set Strain weakening mechanism = plastic weakening with plastic strain only
     set Strain weakening mechanism = plastic weakening with plastic strain and viscous weakening with viscous strain
     set Start prefactor strain weakening intervals = 0.0
     set End prefactor strain weakening intervals = 2.0
-    # the resulting strain-dependent factor is multiplied to the viscous viscosity (i.e. weakening if it is < 1)
     set Prefactor strain weakening factors       =   0.5
-
     set Start plasticity strain weakening intervals = 0.
     set End plasticity strain weakening intervals = 6.0
     set Cohesion strain weakening factors = 0.5
     set Friction strain weakening factors = 0.1
-    #set Use strain weakening = true
-    #set Reaction depth                                 = 8e3
-    set Fixed elastic time step     = 1e4
-    set Use fixed elastic time step = true
-    set Use stress averaging        = true
-
     set Fixed elastic time step     = 10e3
-    set Use fixed elastic time step = true
-    set Use stress averaging        = true
-    set Include viscoelasticity     = true
+    set Use fixed elastic time step = false
+
 
   end
 end
@@ -276,8 +293,8 @@ subsection Adiabatic conditions model
   subsection Compute profile
     set Composition reference profile = function
     # In terms of depth
-    # Moho depth 6 km, LAB depth deepest in domain
-    set Function expression           = 0;0;0; \
+    # Moho depth 8 km, LAB depth deepest in domain
+    set Function expression           = 0;0;0;0;0;0; \
                                         if(x<8e3,1,0); \
                                         if(x>=8e3&x<125e3,1,0); \
                                         0; \
@@ -288,7 +305,7 @@ end
 
 
 subsection Checkpointing
-   set Steps between checkpoint = 50
+   set Steps between checkpoint = 100
    #set Time between checkpoint
 end
 
@@ -302,12 +319,12 @@ subsection Postprocess
   subsection Visualization
     set Interpolate output = true
     set Write higher order output = true
-    set List of output variables      =  viscosity, strain rate, maximum horizontal compressive stress, strain rate tensor, named additional outputs
-    set Time between graphical output = 20e3
+    set List of output variables      =   density, viscosity, strain rate, strain rate tensor, nonadiabatic pressure, principal stress
+    set Time between graphical output = 100e3
     set Output mesh velocity          = false
   end
   subsection Topography
      set Output to file = true
-     set Time between text output = 20e3
+     set Time between text output = 100e3
   end
 end
