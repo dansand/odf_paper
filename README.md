@@ -2,9 +2,9 @@
 
 Contains the ASPECT input file for the reference model of Sandiford et al. (G-cubed, 2021).  
 
-Published models were ran using ASPECT version 2.3.0-pre, compiled with deal.II 9.1.1
+Published models were ran using ASPECT version 2.3.0-pre, compiled with deal.II 9.1.1 (see original branch)
 
-This branch is compatible with ASPECT version 2.6.0-pre (fix_stresses_elasticity, 621dd61f2), using deal.II 9.4.2
+This branch (updated_2023) is compatible with ASPECT version 2.6.0-pre (fix_stresses_elasticity, 621dd61f2), using deal.II 9.4.2
 
 ## REFERENCES
 
